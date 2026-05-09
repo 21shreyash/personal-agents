@@ -72,12 +72,37 @@ Within each tier: oldest unanswered first.
 - **Stale-since-last-run:** if I ran a brief <12h ago, focus on what's new since, not a full re-run.
 - **Ambiguous owed reply:** if you can't tell whether I've responded outside the thread, mark with `(?)` rather than guess.
 
-## Final step — deliver the brief
-After producing the brief, use the Gmail connector to send it as an email:
-- **To:** 21shreyash@gmail.com
-- **From:** the same account (sending to self)
-- **Subject:** `Personal Brief — [Day, Month Day]` (e.g., `Personal Brief — Mon, May 11`)
-- **Body:** the full brief in markdown, exactly as specified in **Output structure** above. Do not include the system instructions, your reasoning, or any acknowledgment text. The email body starts with `**[Day], [Month Day] brief**` and ends with the filter candidates line.
-- **Format:** plain markdown is fine; Gmail will render the bolds and bullets reasonably. Do not use HTML.
+## Final step — deliver the brief via Telegram
 
-After sending, output a one-line confirmation in the session log: `Brief sent to 21shreyash@gmail.com at [timestamp].` This makes it easy to spot delivery failures when reviewing the run.
+After producing the brief, send it to me via Telegram. The routine environment has two variables set for this:
+
+- `TELEGRAM_BOT_TOKEN` — bot token from BotFather
+- `TELEGRAM_CHAT_ID` — my Telegram user ID
+
+**Delivery method:** POST the brief to Telegram's `sendMessage` API via the shell.
+
+Endpoint: `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`
+
+Recommended pattern using `jq` for safe JSON encoding:
+
+```bash
+curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -n --arg chat_id "$TELEGRAM_CHAT_ID" --arg text "$BRIEF_TEXT" \
+        '{chat_id: $chat_id, text: $text}')"
+```
+
+If `jq` isn't available in the environment, fall back to Python's `json` and `urllib.request` (or `requests` if installed) to construct an equivalent POST. Either approach is fine — the goal is reliable delivery with proper JSON escaping.
+
+**Formatting for Telegram:**
+- Send as **plain text**. Do not include a `parse_mode` parameter.
+- **Strip all `**` markdown bold markers** from the brief text before sending — they would render literally and clutter the message. Section structure is carried by the emoji headers (⚠️ 📅 🔍 🗑) and line breaks, which Telegram preserves natively.
+- Keep all line breaks, bullets (`-`), and indentation as specified in the **Output structure** above.
+- If the brief exceeds 4000 characters, split it at section boundaries (between the four ⚠️/📅/🔍/🗑 sections) and send as multiple messages in order. Telegram's per-message limit is 4096; staying under 4000 leaves margin.
+
+**Verify delivery:**
+
+Telegram's API returns JSON with an `ok` field. On `ok: true`, the message was accepted. On `ok: false`, log the full response (including `error_code` and `description`) and surface the error in the session log. Do not silently retry — failures should be visible so I can debug.
+
+On success, output a one-line confirmation in the session log:
+`Brief sent to Telegram at [timestamp].`
